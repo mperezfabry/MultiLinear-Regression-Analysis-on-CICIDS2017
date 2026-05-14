@@ -1,3 +1,4 @@
+# TODO: Harold — trim unused packages. Only readr, dplyr, car, MASS are needed.
 library(tinytex)
 library(readr)
 library(dplyr)
@@ -13,6 +14,8 @@ library(car)
 library(caret)
 
 # --- 1. Load Data ---
+# TODO BUG: Hardcoded absolute path to Katek's machine — will not run anywhere else.
+# Use read_csv("glm_data.csv") instead (already exported by setup.R with BIC-selected features).
 file_list <- list.files(path = here("C:/Users/katek/Desktop/NCF/Spring 2026/Stats 2/Final/MachineLearningCSV/MachineLearningCVE"), pattern = "*.csv", full.names = TRUE)
 
 all_data = lapply(file_list, function(f) {
@@ -32,8 +35,13 @@ all_data = all_data %>%
 # Sampling
 set.seed(42)
 sample_size = 2000 
+# TODO BUG: sample() called twice independently — train and test sets may overlap!
+# Save the index: idx <- sample(nrow(all_data), sample_size), then subset both.
 data_sample = all_data[sample(nrow(all_data), sample_size), ]
 
+# TODO BUG: test still has ALL original columns (79+), not the pruned feature set.
+# predict() on line 79 will fail because model expects different columns.
+# Need to subset test to the same features as data_modeling before predicting.
 test = all_data[-sample(nrow(all_data), sample_size), ]
 
 # Prepare features
@@ -62,7 +70,9 @@ step_bic = step(base_model, scope = list(lower = base_model, upper = full_model)
 message("\n--- MODEL 2: Stepwise BIC Summary ---")
 print(summary(step_bic))
 
-# The response variable is 'Attack_Flag', which shows whether that particular traffic is malicious or not.
+# TODO: These hardcoded column names might not all exist in data_modeling after correlation pruning.
+# Better to extract them programmatically from the step_bic model.
+# Also consider using glm_data.csv from setup.R which already has the consistently selected features.
 data_bic = data_modeling[c('Packet.Length.Variance', 'Destination.Port', 'min_seg_size_forward', 'URG.Flag.Count', 'Init_Win_bytes_backward',
                            'Avg.Bwd.Segment.Size', 'Down.Up.Ratio', 'Init_Win_bytes_forward', 'Avg.Fwd.Segment.Size', 'Flow.Bytes.s',
                            'Bwd.Packet.Length.Min', 'Idle.Min', 'Bwd.IAT.Total', 'PSH.Flag.Count', 'Idle.Std', 'Attack_Flag')]
@@ -78,14 +88,21 @@ get_logistic_pred = function(mod, data, res = "y", cut = 0.5) {
   probs = predict(mod, newdata = data, type = "response")
   ifelse(probs > cut, 1, 0)
 }
+# TODO BUG: test has ALL original columns (79+). predict() expects the pruned feature columns.
+# Need to first subset test to match data_bic's columns (minus Attack_Flag).
 test_pred_50 = get_logistic_pred(afmodelbic, data = test, res = "Attack_Flag", cut = 0.585)
 test_tab_50 = table(predicted = test_pred_50, actual = test$Attack_Flag)
 print(test_tab_50)
 # With a cut-off of .585, 176,525 out of 2,825,876 observations were misclassified. This is a misclassification rate of 6.25%.
 
+# TODO: Add ROC curve and AUC — required for classification performance evaluation.
+# library(pROC) or caret::confusionMatrix for full metrics (accuracy, precision, recall, F1).
 
 
 
+
+# TODO: The VIF removal below drops features manually. Consider using car::vif()
+# in a loop or automated stepwise removal instead of hardcoding.
 # Packet.Length.Variance and Bwd.IAT.Total had a VIF higher than 5 and were removed.
 data_bicvif = data_modeling[c('Destination.Port', 'min_seg_size_forward', 'URG.Flag.Count', 'Init_Win_bytes_backward',
                            'Avg.Bwd.Segment.Size', 'Down.Up.Ratio', 'Init_Win_bytes_forward', 'Avg.Fwd.Segment.Size', 'Flow.Bytes.s',
@@ -114,6 +131,8 @@ for(i in 1:nrow(data_bicvif)){
     print(rstandard(afmodelbicvif, type='pearson')[i])
   }
 }
+# TODO: Outlier indices are hardcoded here from the loop above. The row numbers may change
+# if the data or seed changes. Better to store the indices programmatically from the loop.
 # Model without outliers.
 data_bic_outvifp = data_bicvif[-c(78, 96, 117, 154, 213, 403, 452, 454, 472, 499, 516, 537, 622, 899, 936, 947, 1023, 1046, 1048, 1052,
                                   1068, 1078, 1147, 1183, 1210, 1228, 1245, 1332, 1335, 1343, 1401, 1432, 1481, 1544, 1554, 1559, 1603, 1648, 1712, 1729,

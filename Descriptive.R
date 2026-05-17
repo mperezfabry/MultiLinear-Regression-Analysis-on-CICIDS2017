@@ -32,7 +32,7 @@ cat("--- GLM Dataset Summary (Attack_Flag predictors, all traffic) ---\n")
 print(summary(glm_data))
 cat("\n")
 
-# --- 3. Density Plots: Attack vs Benign for Key Features ---
+# --- 3. Density Plots: Attack vs Benign Overlay ---
 
 glm_data$Label <- ifelse(glm_data$Attack_Flag == 1, "Attack", "Benign")
 
@@ -42,13 +42,25 @@ features_to_plot <- c("Destination.Port", "Avg.Fwd.Segment.Size",
 pdf("descriptive_density_plots.pdf", width = 10, height = 8)
 par(mfrow = c(2, 2))
 for (feat in features_to_plot) {
-  dens <- density(glm_data[[feat]], na.rm = TRUE)
-  plot(dens, main = paste("Density of", feat), xlab = feat, col = "steelblue", lwd = 2)
-  # TODO: Harold — overlay separate densities for Attack vs Benign on each plot
+  benign_vals <- glm_data[[feat]][glm_data$Attack_Flag == 0]
+  attack_vals <- glm_data[[feat]][glm_data$Attack_Flag == 1]
+
+  dens_b <- density(benign_vals, na.rm = TRUE)
+  dens_a <- density(attack_vals, na.rm = TRUE)
+
+  ymax <- max(c(dens_b$y, dens_a$y))
+  xrange <- range(c(dens_b$x, dens_a$x))
+
+  plot(dens_b, main = paste("Density of", feat), xlab = feat,
+       col = "steelblue", lwd = 2,
+       xlim = xrange, ylim = c(0, ymax))
+  lines(dens_a, col = "firebrick", lwd = 2)
+  legend("topright", legend = c("Benign", "Attack"),
+         col = c("steelblue", "firebrick"), lwd = 2, bty = "n")
 }
 par(mfrow = c(1, 1))
 dev.off()
-cat("Saved density plots to descriptive_density_plots.pdf\n\n")
+cat("Saved attack-vs-benign density plots to descriptive_density_plots.pdf\n\n")
 
 # --- 4. Correlation Matrix ---
 
@@ -69,14 +81,57 @@ par(mfrow = c(1, 1))
 dev.off()
 cat("Saved correlation heatmaps to descriptive_correlation_plots.pdf\n\n")
 
-# --- 5. TODO: Categorical Variable Relationship ---
-# TODO: Study the relationship between two categorical variables.
-#       For example: create binned categories from Destination.Port
-#       (well-known / registered / dynamic) and test association with Attack_Flag
-#       using a chi-square test or mosaic plot.
+# --- 5. Categorical Relationship: Port Category vs Attack_Flag ---
+# IANA port ranges: well-known (0-1023), registered (1024-49151), dynamic (49152-65535).
+# Two categorical variables: Port_Category (predictor) and Attack_Flag (response).
 
-# --- 6. TODO: Comparative Benign vs Attack Distributions ---
-# TODO: Side-by-side boxplots comparing top predictors across Attack/Benign groups.
-# TODO: Add a table of means and variances split by Attack_Flag.
+glm_data$Port_Category <- cut(
+  glm_data$Destination.Port,
+  breaks = c(-Inf, 1023, 49151, Inf),
+  labels = c("Well-known", "Registered", "Dynamic")
+)
 
-cat("=== Descriptive analysis complete ===\n")
+port_attack_tab <- table(
+  Port_Category = glm_data$Port_Category,
+  Attack        = ifelse(glm_data$Attack_Flag == 1, "Yes", "No")
+)
+cat("--- Port Category vs Attack_Flag (counts) ---\n")
+print(port_attack_tab)
+cat("\n--- Row-wise attack rate by port category (%) ---\n")
+print(round(prop.table(port_attack_tab, 1) * 100, 1))
+
+chi <- chisq.test(port_attack_tab)
+cat(sprintf("\nChi-square test: X^2 = %.2f, df = %d, p = %.3e\n\n",
+            chi$statistic, chi$parameter, chi$p.value))
+
+# --- 6. Comparative Benign vs Attack Distributions ---
+
+top_features <- c("Avg.Fwd.Segment.Size", "Avg.Bwd.Segment.Size",
+                  "Packet.Length.Variance", "Destination.Port",
+                  "Down.Up.Ratio", "Init_Win_bytes_backward")
+
+pdf("descriptive_boxplots.pdf", width = 10, height = 7)
+par(mfrow = c(2, 3))
+for (feat in top_features) {
+  boxplot(glm_data[[feat]] ~ glm_data$Attack_Flag,
+          names = c("Benign", "Attack"),
+          main  = feat,
+          ylab  = feat,
+          xlab  = "",
+          col   = c("steelblue", "firebrick"))
+}
+par(mfrow = c(1, 1))
+dev.off()
+cat("Saved comparative boxplots to descriptive_boxplots.pdf\n\n")
+
+group_stats <- glm_data %>%
+  group_by(Attack_Flag) %>%
+  summarise(across(all_of(top_features),
+                   list(mean = ~mean(.x, na.rm = TRUE),
+                        sd   = ~sd(.x,   na.rm = TRUE)))) %>%
+  as.data.frame()
+
+cat("--- Group means and SDs (Attack_Flag: 0 = Benign, 1 = Attack) ---\n")
+print(group_stats)
+
+cat("\n=== Descriptive analysis complete ===\n")

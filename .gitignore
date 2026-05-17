@@ -1,0 +1,21 @@
+# RStudio session / project user state (machine-specific, do not push)
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Claude Code session data (personal)
+.claude/
+
+# Office lock / temp files (created when a doc is open in Word/Excel)
+~$*
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor swap / backup files
+*.swp
+*.swo
+*.bak
+*~

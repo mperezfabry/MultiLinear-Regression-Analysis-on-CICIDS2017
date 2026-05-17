@@ -9,11 +9,18 @@ library(dplyr)
 library(ggplot2)
 
 # --- 1. Load Data (sample only, all_data too large for memory) ---
-script_dir <- if (interactive() && requireNamespace("rstudioapi", quietly = TRUE)) {
-  dirname(rstudioapi::getSourceEditorContext()$path)
-} else {
-  here::here()
-}
+# Resolve script directory robustly. Prefer the RStudio editor context (so the
+# "Source" button works regardless of working directory). Fall back to getwd()
+# when sourced from the console, where getSourceEditorContext()$path is "".
+script_dir <- tryCatch({
+  if (interactive() && requireNamespace("rstudioapi", quietly = TRUE) &&
+      rstudioapi::isAvailable()) {
+    p <- rstudioapi::getSourceEditorContext()$path
+    if (!is.null(p) && nzchar(p)) dirname(p) else getwd()
+  } else {
+    getwd()
+  }
+}, error = function(e) getwd())
 file_list <- list.files(path = script_dir, pattern = "\\.csv$", full.names = TRUE)
 
 set.seed(42)

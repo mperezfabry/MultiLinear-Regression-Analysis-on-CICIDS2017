@@ -1,0 +1,591 @@
+---
+title: "Statistical Analysis of CICIDS2017 Network Intrusion Data"
+subtitle: "Multiple Linear Regression & Logistic Regression"
+author: "Statistics II — IDC 5205"
+date: "May 2026"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    highlight: zenburn
+    fig_caption: yes
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{amsmath}
+  - \usepackage{float}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, 
+                      fig.align = "center", fig.pos = "H")
+```
+
+\newpage
+
+# Data Description and Research Questions
+
+## The CICIDS2017 Dataset
+
+CICIDS2017 is a public network intrusion detection dataset from the Canadian Institute for Cybersecurity. Each row represents one network flow (a connection between two computers), with 79 columns describing packet sizes, timing, TCP flags, and routing. Some flows are normal benign traffic; others are attacks (DoS, port scans, brute-force) that researchers ran on purpose and labeled accordingly.
+
+**Source:** https://www.unb.ca/cic/datasets/ids-2017.html
+
+## Research Questions
+
+1. **MLR Question:** Among benign traffic only, which network flow features best predict the total byte volume (Flow.Bytes)? A multiple linear regression quantifies the relationship between packet-level features and flow size, building a statistical baseline of "normal" traffic shape.
+
+2. **Logistic Question:** Which features distinguish attack flows from benign flows? A logistic regression model identifies the key risk factors and classifies traffic with measurable accuracy (ROC/AUC, sensitivity, specificity).
+
+## Data Preparation
+
+We sampled ~250 rows per raw CSV file (8 files, each from a different day), cleaned column names, dropped infinities and NAs, and used **Stepwise BIC** for variable selection on two separate feature sets:
+
+- **MLR features** — Stepwise BIC with `Flow.Bytes` as the response on benign-only data → 8 predictors selected.
+- **Logistic features** — Stepwise BIC with `Attack_Flag` as the response on all data → 13 predictors selected (2 later dropped for high VIF).
+
+Highly correlated pairs (|r| > 0.9) were pruned before selection to ensure model stability.
+
+```{r data-loading}
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+# Load pre-exported datasets
+mlr_data <- read_csv("mlr_data.csv", show_col_types = FALSE)
+glm_data <- read_csv("glm_data.csv", show_col_types = FALSE)
+
+cat(sprintf("MLR dataset (benign): %d rows, %d predictors + Flow.Bytes\n",
+            nrow(mlr_data), ncol(mlr_data) - 1))
+cat(sprintf("GLM dataset (all):    %d rows, %d predictors + Attack_Flag\n\n",
+            nrow(glm_data), ncol(glm_data) - 1))
+cat(sprintf("Attack rate: %.1f%%\n", 100 * mean(glm_data$Attack_Flag)))
+```
+
+\newpage
+
+# Descriptive Analysis
+
+## Summary Statistics
+
+```{r descriptive-summary}
+cat("--- MLR Dataset Summary ---\n")
+print(summary(mlr_data))
+cat("\n--- GLM Dataset Summary ---\n")
+print(summary(glm_data))
+```
+
+## Density Plots: Attack vs Benign
+
+Overlay density plots show attack flows are more spread and heavy-tailed across key features.
+
+```{r density-plots, fig.cap="Attack vs Benign Density Overlays", fig.width=10, fig.height=8}
+glm_data$Label <- ifelse(glm_data$Attack_Flag == 1, "Attack", "Benign")
+features_to_plot <- c("Destination.Port", "Avg.Fwd.Segment.Size",
+                       "Avg.Bwd.Segment.Size", "Packet.Length.Variance")
+
+par(mfrow = c(2, 2))
+for (feat in features_to_plot) {
+  benign_vals <- glm_data[[feat]][glm_data$Attack_Flag == 0]
+  attack_vals <- glm_data[[feat]][glm_data$Attack_Flag == 1]
+  dens_b <- density(benign_vals, na.rm = TRUE)
+  dens_a <- density(attack_vals, na.rm = TRUE)
+  ymax <- max(c(dens_b$y, dens_a$y))
+  xrange <- range(c(dens_b$x, dens_a$x))
+  plot(dens_b, main = paste("Density of", feat), xlab = feat,
+       col = "steelblue", lwd = 2, xlim = xrange, ylim = c(0, ymax))
+  lines(dens_a, col = "firebrick", lwd = 2)
+  legend("topright", legend = c("Benign", "Attack"),
+         col = c("steelblue", "firebrick"), lwd = 2, bty = "n")
+}
+par(mfrow = c(1, 1))
+```
+
+## Correlation Heatmaps
+
+```{r correlation-heatmaps, fig.cap="Correlation Heatmaps", fig.width=10, fig.height=8}
+par(mfrow = c(1, 2))
+cor_mlr <- cor(mlr_data)
+heatmap(cor_mlr, symm = TRUE, main = "MLR Predictor Correlations\n(Benign Traffic)",
+        col = colorRampPalette(c("navy", "white", "firebrick"))(100))
+cor_glm <- cor(dplyr::select(glm_data, -Attack_Flag, -Label))
+heatmap(cor_glm, symm = TRUE, main = "GLM Predictor Correlations\n(All Traffic)",
+        col = colorRampPalette(c("navy", "white", "firebrick"))(100))
+par(mfrow = c(1, 1))
+```
+
+\newpage
+
+## Two Categorical Variables: Port Category vs Attack Flag
+
+IANA port ranges: well-known (0--1023), registered (1024--49151), dynamic (49152--65535). A chi-square test confirms the relationship between destination port category and attack status.
+
+```{r categorical-analysis}
+glm_data$Port_Category <- cut(
+  glm_data$Destination.Port,
+  breaks = c(-Inf, 1023, 49151, Inf),
+  labels = c("Well-known", "Registered", "Dynamic"))
+
+port_attack_tab <- table(Port_Category = glm_data$Port_Category,
+                         Attack = ifelse(glm_data$Attack_Flag == 1, "Yes", "No"))
+print(port_attack_tab)
+cat("\nRow-wise attack rate (%):\n")
+print(round(prop.table(port_attack_tab, 1) * 100, 1))
+
+chi <- chisq.test(port_attack_tab)
+cat(sprintf("\nChi-square test: X^2 = %.2f, df = %d, p = %.3e\n",
+            chi$statistic, chi$parameter, chi$p.value))
+```
+
+## Comparative Boxplots
+
+```{r boxplots, fig.cap="Benign vs Attack Boxplots", fig.width=10, fig.height=7}
+top_features <- c("Avg.Fwd.Segment.Size", "Avg.Bwd.Segment.Size",
+                  "Packet.Length.Variance", "Destination.Port",
+                  "Down.Up.Ratio", "Init_Win_bytes_backward")
+
+par(mfrow = c(2, 3))
+for (feat in top_features) {
+  boxplot(glm_data[[feat]] ~ glm_data$Attack_Flag,
+          names = c("Benign", "Attack"), main = feat,
+          ylab = feat, xlab = "",
+          col = c("steelblue", "firebrick"))
+}
+par(mfrow = c(1, 1))
+```
+
+```{r group-stats}
+group_stats <- glm_data |>
+  dplyr::group_by(Attack_Flag) |>
+  dplyr::summarise(dplyr::across(dplyr::all_of(top_features),
+                   list(mean = ~mean(.x, na.rm = TRUE),
+                        sd   = ~sd(.x, na.rm = TRUE)))) |>
+  as.data.frame()
+print(group_stats)
+```
+
+\newpage
+
+# Multiple Linear Regression
+
+## Outlier Detection and Pruning
+
+Before fitting the final model, we checked for high-leverage observations using hat values. The initial model (fit on all 1611 benign flows) revealed one extreme point:
+
+```{r mlr-outlier-detect}
+library(car)
+
+# Fit initial model to detect outliers
+mlr_init <- lm(Flow.Bytes ~ ., data = mlr_data)
+hatv <- hatvalues(mlr_init)
+p <- length(coef(mlr_init))
+n <- nrow(mlr_data)
+threshold <- 2 * p / n
+outlier_row <- which.max(hatv)
+
+cat("--- Initial Model Leverage Diagnostics ---\n")
+cat(sprintf("Leverage threshold (2p/n): %.4f\n", threshold))
+cat(sprintf("Worst observation — row %d:\n", outlier_row))
+cat(sprintf("  Leverage = %.4f (%.1f × threshold)\n",
+            hatv[outlier_row], hatv[outlier_row] / threshold))
+cat(sprintf("  Flow.Bytes = %d (next largest: %d)\n",
+            mlr_data$Flow.Bytes[outlier_row],
+            max(mlr_data$Flow.Bytes[-outlier_row])))
+cat(sprintf("  act_data_pkt_fwd = %d (median = %d, mean = %.1f)\n",
+            mlr_data$act_data_pkt_fwd[outlier_row],
+            median(mlr_data$act_data_pkt_fwd), mean(mlr_data$act_data_pkt_fwd)))
+
+cat("\nThe initial R² was dominated by this single point.\n")
+cat(sprintf("  With outlier:   R² = %.4f\n", summary(mlr_init)$r.squared))
+```
+
+This one flow — a 10.7 million byte transfer with 2626 active data packets — has leverage 88 times the threshold. It is a genuine observation (large file transfers exist on real networks), but it is so far from the rest of the data that a single linear model cannot simultaneously describe it and the other 1610 flows. We remove it and refit on the remaining 1610 benign flows.
+
+```{r mlr-outlier-remove}
+mlr_clean <- mlr_data[-outlier_row, ]
+cat(sprintf("Clean data: %d rows\n", nrow(mlr_clean)))
+```
+
+**Model:** `Flow.Bytes ~ .` using the 8 BIC-selected predictors on benign traffic ($n = 1610$ after pruning).
+
+```{r mlr-fit}
+mlr_model <- lm(Flow.Bytes ~ ., data = mlr_clean)
+s_mlr <- summary(mlr_model)
+print(s_mlr)
+```
+
+## ANOVA (Overall F-Test)
+
+```{r mlr-anova}
+anova(mlr_model)
+```
+
+## Confidence Intervals
+
+```{r mlr-confint}
+confint(mlr_model, level = 0.95)
+```
+
+## Multicollinearity (VIF)
+
+```{r mlr-vif}
+vif_values <- car::vif(mlr_model)
+print(vif_values)
+cat(sprintf("\nMax VIF: %.2f\n", max(vif_values)))
+```
+
+\newpage
+
+## Model Diagnostics
+
+```{r mlr-diagnostics, fig.cap="MLR Diagnostic Plots (Clean Data)", fig.width=10, fig.height=8}
+par(mfrow = c(2, 2))
+plot(mlr_model, which = 1, main = "Residuals vs Fitted\n(Linearity & Homoscedasticity)")
+abline(h = 0, col = "red", lty = 2)
+plot(mlr_model, which = 2, main = "Normal Q-Q\n(Normality of Residuals)")
+plot(mlr_model, which = 3, main = "Scale-Location\n(Constant Variance)")
+plot(mlr_model, which = 5, main = "Residuals vs Leverage\n(Influential Points)")
+par(mfrow = c(1, 1))
+```
+
+### Heteroscedasticity Test (NCV)
+
+```{r mlr-ncv}
+ncv_test <- ncvTest(mlr_model)
+print(ncv_test)
+```
+
+### Normality Test (Shapiro-Wilk)
+
+```{r mlr-shapiro}
+shapiro_test <- shapiro.test(residuals(mlr_model))
+print(shapiro_test)
+```
+
+### Influence Diagnostics
+
+```{r mlr-influence}
+cooksd <- cooks.distance(mlr_model)
+n_clean <- nrow(mlr_clean)
+cat(sprintf("Cook's distance > 4/n: %d observations\n", sum(cooksd > 4 / n_clean)))
+
+hat_values <- hatvalues(mlr_model)
+p <- length(coef(mlr_model))
+cat(sprintf("High leverage (> 2p/n): %d observations\n",
+            sum(hat_values > 2 * p / n_clean)))
+
+dfbetas_vals <- dfbetas(mlr_model)
+large_dfbetas <- which(abs(dfbetas_vals) > 2 / sqrt(n_clean), arr.ind = TRUE)
+cat(sprintf("Large DFBETAS (> 2/sqrt(n)): %d instances\n", nrow(large_dfbetas)))
+
+rstud <- rstudent(mlr_model)
+cat(sprintf("|rstudent| > 3: %d observations\n", sum(abs(rstud) > 3)))
+```
+
+\newpage
+
+## Robustness Check: Log-Transformed Response
+
+The diagnostics above flag heteroscedasticity and non-normality. We fit $\log(Flow.Bytes + 1)$ as a robustness check and compare the diagnostic plots.
+
+```{r mlr-log-robustness, fig.cap="Log-Transformed MLR Diagnostic Plots", fig.width=10, fig.height=8}
+mlr_log <- mlr_clean
+mlr_log$Flow.Bytes <- log1p(mlr_log$Flow.Bytes)
+
+mlr_model_log <- lm(Flow.Bytes ~ ., data = mlr_log)
+
+ncv_log     <- ncvTest(mlr_model_log)
+shapiro_log <- shapiro.test(residuals(mlr_model_log))
+
+cat(sprintf("Log model R-squared: %.4f   (raw: %.4f)\n",
+            summary(mlr_model_log)$r.squared, s_mlr$r.squared))
+cat(sprintf("NCV test p-value -- raw: %.3e | log: %.3e\n",
+            ncv_test$p, ncv_log$p))
+cat(sprintf("Shapiro W -- raw: %.4f | log: %.4f\n",
+            shapiro_test$statistic, shapiro_log$statistic))
+
+par(mfrow = c(2, 2))
+plot(mlr_model_log, which = 1, main = "Log: Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+plot(mlr_model_log, which = 2, main = "Log: Normal Q-Q")
+plot(mlr_model_log, which = 3, main = "Log: Scale-Location")
+plot(mlr_model_log, which = 5, main = "Log: Residuals vs Leverage")
+par(mfrow = c(1, 1))
+```
+
+\newpage
+
+## MLR Interpretation
+
+### Model Fit
+
+- **R² = 0.6249, Adjusted R² = 0.6230** — the model explains 62.5% of variance in Flow.Bytes (the original $R^2 = 0.99$ was an artifact of the single extreme outlier).
+- **F(8, 1601) = 333.35, p < 2.2e-16** — the model as a whole is highly significant.
+- Residual standard error: 48,330 bytes.
+
+### Coefficients
+
+All 8 predictors remain statistically significant after removing the outlier. The dominant drivers are `act_data_pkt_fwd` and `Avg.Bwd.Segment.Size` (both $t > 22$).
+
+### Practical Significance (Standardized Coefficients)
+
+```{r mlr-scaled, fig.cap="Standardized Coefficient Magnitudes (Clean Data)"}
+predictor_names <- setdiff(names(mlr_clean), "Flow.Bytes")
+mlr_scaled <- mlr_clean
+mlr_scaled[predictor_names] <- scale(mlr_clean[predictor_names])
+mlr_model_scaled <- lm(Flow.Bytes ~ ., data = mlr_scaled)
+
+scaled_coefs <- coef(summary(mlr_model_scaled))[-1, , drop = FALSE]
+ranked <- scaled_coefs[order(-abs(scaled_coefs[, "Estimate"])), , drop = FALSE]
+
+response_sd <- sd(mlr_clean$Flow.Bytes)
+practical_table <- data.frame(
+  Predictor          = rownames(ranked),
+  Scaled_Beta        = round(ranked[, "Estimate"], 1),
+  Pct_of_Response_SD = round(100 * abs(ranked[, "Estimate"]) / response_sd, 2),
+  p_value            = signif(ranked[, "Pr(>|t|)"], 3),
+  row.names          = NULL)
+print(practical_table)
+
+cat(sprintf("\nFlow.Bytes SD = %.0f bytes\n", response_sd))
+cat("A 1-SD change in the predictor changes Flow.Bytes by the Scaled_Beta amount.\n")
+cat("Pct_of_Response_SD expresses this as a percentage of the response SD.\n")
+cat("Even after removing the outlier, act_data_pkt_fwd (55.5% of SD) and\n")
+cat("Avg.Bwd.Segment.Size (34.6% of SD) are the most important predictors.\n")
+```
+
+\newpage
+
+# Logistic Regression
+
+**Model:** `Attack_Flag ~ .` using the BIC-selected predictors, with VIF-based iterative pruning. 70/30 train/test split.
+
+```{r logistic-fit}
+library(car)
+library(pROC)
+
+set.seed(42)
+train_idx <- sample(seq_len(nrow(glm_data)), size = floor(0.7 * nrow(glm_data)))
+train <- glm_data[train_idx, ]
+test  <- glm_data[-train_idx, ]
+
+cat(sprintf("Train: %d rows | Test: %d rows\n", nrow(train), nrow(test)))
+cat(sprintf("Test attack rate: %.1f%%\n", 100 * mean(test$Attack_Flag)))
+```
+
+## Full Model with VIF Pruning
+
+```{r logistic-vif}
+full_model <- glm(Attack_Flag ~ ., data = train, family = binomial,
+                  control = glm.control(maxit = 100))
+
+cat("--- VIF (full model) ---\n")
+vif_full <- car::vif(full_model)
+print(round(vif_full, 2))
+
+# Two predictors had VIF > 5 and were iteratively dropped:
+#   Bwd.IAT.Max (VIF = 171) and Packet.Length.Variance (VIF = 35)
+cat(sprintf("\nDropping Bwd.IAT.Max (VIF = %.2f)\n", max(vif_full)))
+cat(sprintf("Dropping Packet.Length.Variance (VIF = %.2f)\n",
+            vif_full["Packet.Length.Variance"]))
+```
+
+```{r logistic-final-model}
+final_model <- glm(
+  Attack_Flag ~ Fwd.Packet.Length.Min + Avg.Fwd.Segment.Size +
+    URG.Flag.Count + Active.Std + Down.Up.Ratio + Destination.Port +
+    Idle.Min + Avg.Bwd.Segment.Size + Bwd.IAT.Total +
+    Init_Win_bytes_backward + PSH.Flag.Count,
+  data = train, family = binomial, control = glm.control(maxit = 100))
+summary(final_model)
+cat("--- VIF (final model) ---\n")
+print(round(car::vif(final_model), 2))
+```
+
+## Separation Diagnostic
+
+```{r logistic-separation}
+sep_summary <- summary(final_model)$coefficients
+big_est <- which(abs(sep_summary[, "Estimate"])  > 10)
+big_se  <- which(sep_summary[, "Std. Error"]     > 10)
+flagged <- union(big_est, big_se)
+if (length(flagged) > 0) {
+  cat("Separation warning — large coefficients/SEs detected:\n")
+  print(round(sep_summary[flagged, , drop = FALSE], 3))
+  cat("\n'Active.Std' is mostly zero in the data. Its coefficient is retained\n")
+  cat("in the model (BIC selected it) but the odds ratio is not interpreted.\n")
+} else {
+  cat("No separation indicators.\n")
+}
+```
+
+## Model Significance (Likelihood Ratio Test)
+
+```{r logistic-lr}
+lr_stat <- final_model$null.deviance - final_model$deviance
+lr_df   <- final_model$df.null - final_model$df.residual
+lr_p    <- pchisq(lr_stat, lr_df, lower.tail = FALSE)
+cat(sprintf("LR test: chi-sq = %.2f on %d df, p = %.3e\n", lr_stat, lr_df, lr_p))
+```
+
+\newpage
+
+## ROC Curve and AUC
+
+```{r logistic-roc, fig.cap="ROC Curve for Logistic Regression", fig.width=7, fig.height=7}
+test_probs <- predict(final_model, newdata = test, type = "response")
+roc_obj <- roc(test$Attack_Flag, test_probs, quiet = TRUE)
+auc_val <- as.numeric(auc(roc_obj))
+plot(roc_obj, main = sprintf("ROC Curve (AUC = %.3f)", auc_val),
+     col = "steelblue", lwd = 2)
+abline(a = 0, b = 1, lty = 2, col = "gray60")
+```
+
+## Predicted Probability Overlay
+
+```{r logistic-prob-overlay, fig.cap="Predicted Attack Probability by Actual Class", fig.width=8, fig.height=6}
+dens_benign <- density(test_probs[test$Attack_Flag == 0], from = 0, to = 1)
+dens_attack <- density(test_probs[test$Attack_Flag == 1], from = 0, to = 1)
+ymax <- max(c(dens_benign$y, dens_attack$y))
+plot(dens_benign, main = "Predicted Attack Probability by Actual Class",
+     xlab = "Predicted Probability", ylab = "Density",
+     col = "steelblue", lwd = 2, xlim = c(0, 1), ylim = c(0, ymax))
+lines(dens_attack, col = "firebrick", lwd = 2)
+legend("topright", legend = c("Benign", "Attack"),
+       col = c("steelblue", "firebrick"), lwd = 2, bty = "n")
+```
+
+## Classification Metrics
+
+```{r logistic-classification}
+compute_metrics <- function(cm) {
+  TP <- cm["1", "1"]; TN <- cm["0", "0"]
+  FP <- cm["1", "0"]; FN <- cm["0", "1"]
+  list(accuracy = (TP + TN) / sum(cm), sensitivity = TP / (TP + FN),
+       specificity = TN / (TN + FP), precision = TP / (TP + FP),
+       f1 = 2 * TP / (2 * TP + FP + FN))
+}
+print_metrics <- function(label, m) {
+  cat(sprintf("%s | Acc: %.3f  Sens: %.3f  Spec: %.3f  Prec: %.3f  F1: %.3f\n",
+              label, m$accuracy, m$sensitivity, m$specificity, m$precision, m$f1))
+}
+
+# Cutoff = 0.5
+preds_05 <- ifelse(test_probs > 0.5, 1, 0)
+cm_05 <- table(predicted = factor(preds_05, levels = c(0, 1)),
+               actual    = factor(test$Attack_Flag, levels = c(0, 1)))
+cat("--- Confusion Matrix (cutoff = 0.5) ---\n")
+print(cm_05)
+print_metrics("cutoff 0.5", compute_metrics(cm_05))
+
+# Youden-optimal cutoff
+opt <- coords(roc_obj, "best", best.method = "youden", transpose = FALSE)
+opt_cut <- as.numeric(opt$threshold[1])
+preds_opt <- ifelse(test_probs > opt_cut, 1, 0)
+cm_opt <- table(predicted = factor(preds_opt, levels = c(0, 1)),
+                actual    = factor(test$Attack_Flag, levels = c(0, 1)))
+cat(sprintf("\n--- Confusion Matrix (Youden cutoff = %.3f) ---\n", opt_cut))
+print(cm_opt)
+print_metrics(sprintf("cutoff %.3f", opt_cut), compute_metrics(cm_opt))
+```
+
+\newpage
+
+## Odds Ratios
+
+```{r logistic-odds-ratios}
+odds_ratios <- exp(coef(final_model))
+or_ci <- exp(confint.default(final_model))
+or_table <- data.frame(
+  Predictor  = names(odds_ratios),
+  OR         = round(odds_ratios, 4),
+  CI_lower   = round(or_ci[, 1], 4),
+  CI_upper   = round(or_ci[, 2], 4),
+  Pct_Change = round(100 * (odds_ratios - 1), 1),
+  row.names  = NULL)
+print(or_table)
+```
+
+## Odds Ratio Forest Plot
+
+```{r logistic-forest, fig.cap="Odds Ratios with 95% Confidence Intervals (log scale)", fig.width=9, fig.height=6}
+or_df <- or_table[or_table$Predictor != "(Intercept)", ]
+or_df <- or_df[order(or_df$OR), ]
+or_df$Predictor <- factor(or_df$Predictor, levels = or_df$Predictor)
+
+par(mar = c(5, 12, 3, 3))
+plot(log(or_df$OR), seq_len(nrow(or_df)), type = "n", yaxt = "n",
+     xlab = "Odds Ratio (log scale)", ylab = "",
+     main = "Odds Ratios with 95% CI",
+     xlim = log(c(0.0001, 10)))
+abline(v = log(1), col = "gray60", lty = 2)
+axis(2, at = seq_len(nrow(or_df)), labels = or_df$Predictor, las = 2, cex.axis = 0.7)
+for (i in seq_len(nrow(or_df))) {
+  col <- ifelse(or_df$OR[i] > 1, "firebrick", "steelblue")
+  lines(log(c(or_df$CI_lower[i], or_df$CI_upper[i])), c(i, i), col = col, lwd = 1.5)
+  points(log(or_df$OR[i]), i, pch = 18, cex = 1.5, col = col)
+}
+axis(1, at = log(c(0.0001, 0.001, 0.01, 0.1, 1, 10)),
+     labels = c("0.0001", "0.001", "0.01", "0.1", "1", "10"))
+```
+
+## Standardized Odds Ratios (Practical Significance)
+
+A 1-SD change in each predictor, with practical effect size classification.
+
+```{r logistic-standardized-or}
+final_terms  <- setdiff(names(coef(final_model)), "(Intercept)")
+train_scaled <- train[, c("Attack_Flag", final_terms), drop = FALSE]
+train_scaled[, final_terms] <- as.data.frame(scale(train_scaled[, final_terms]))
+
+final_model_scaled <- glm(Attack_Flag ~ ., data = train_scaled, family = binomial,
+                          control = glm.control(maxit = 100))
+
+or_scaled          <- exp(coef(final_model_scaled))[-1]
+pct_change_scaled  <- 100 * (or_scaled - 1)
+pct_change_display <- round(pct_change_scaled, 1)
+
+practical_class <- ifelse(abs(pct_change_display) >= 100, "LARGE",
+                   ifelse(abs(pct_change_display) >   25, "moderate",
+                   ifelse(abs(pct_change_display) >    5, "small", "trivial")))
+
+practical_table <- data.frame(
+  Predictor          = names(or_scaled),
+  OR_per_SD          = round(or_scaled, 3),
+  Pct_Change_per_SD  = pct_change_display,
+  Practical          = practical_class,
+  row.names          = NULL)
+print(practical_table)
+cat("\nClass scale: LARGE > 100% | moderate 25--100% | small 5--25% | trivial < 5%\n")
+```
+
+\newpage
+
+# Summary of Results
+
+## MLR Key Findings
+
+| Aspect | Result |
+|--------|--------|
+| R² | 0.6249 (after removing 1 extreme leverage outlier) |
+| Significant predictors | All 8 |
+| Top drivers | `act_data_pkt_fwd` (55.5% of SD), `Avg.Bwd.Segment.Size` (34.6% of SD) |
+| Max VIF | 6.83 (acceptable) |
+| Diagnostics | Heteroscedastic & non-normal residuals (common for traffic data); improved by log transform |
+| Outlier handled | Row 1198 removed (leverage = 0.99, was artifactually inflating R² to 0.99) |
+
+## Logistic Regression Key Findings
+
+| Aspect | Result |
+|--------|--------|
+| AUC | 0.9625 |
+| LR test | $\chi^2 = 878.25$, $p = 2.94 \times 10^{-181}$ |
+| Accuracy (0.5 cutoff) | 91.2% |
+| Sensitivity (Youden cutoff) | 95.3% |
+| Specificity (Youden cutoff) | 89.0% |
+| Top predictors (std OR) | `Fwd.Packet.Length.Min`, `Avg.Fwd.Segment.Size` (both LARGE negative), `Idle.Min` (LARGE positive), `Down.Up.Ratio` (LARGE positive) |
+| Separation flag | `Active.Std` — retained in model, OR not interpreted |
+
+```{r session-info}
+sessionInfo()
+```

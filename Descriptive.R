@@ -68,9 +68,23 @@ pdf("descriptive_correlation_plots.pdf", width = 10, height = 8)
 par(mfrow = c(1, 2))
 
 # MLR correlation
-cor_mlr <- cor(mlr_data)
-heatmap(cor_mlr, symm = TRUE, main = "MLR Predictor Correlations\n(Benign Traffic)",
-        col = colorRampPalette(c("navy", "white", "firebrick"))(100))
+cor_mlr <- cor(mlr_data %>% select(-Flow.Bytes))
+# 1. Open the file device
+png(filename = "MLR_Predictor_Correlations.png", 
+    width = 900,      # Slightly wider to accommodate text
+    height = 900, 
+    res = 130)        # Higher resolution for sharper text
+
+# 2. Run heatmap with internal margin scaling
+heatmap(cor_mlr, 
+        symm = TRUE, 
+        main = "MLR Predictor Correlations\n(Benign Traffic)",
+        col = colorRampPalette(c("navy", "white", "firebrick"))(100),
+        margins = c(12, 12)) # Bumps up bottom and right margins internally
+
+# 3. Save the file
+dev.off()
+
 
 # GLM correlation
 cor_glm <- cor(glm_data %>% select(-Attack_Flag, -Label))

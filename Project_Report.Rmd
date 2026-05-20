@@ -106,7 +106,10 @@ par(mfrow = c(1, 1))
 ```{r correlation-heatmaps, fig.cap="Correlation Heatmaps", fig.width=10, fig.height=8}
 par(mfrow = c(1, 2))
 cor_mlr <- cor(mlr_data)
-heatmap(cor_mlr, symm = TRUE, main = "MLR Predictor Correlations\n(Benign Traffic)",
+cor_mlr <- cor(mlr_data %>% select(-Flow.Bytes))
+heatmap(cor_mlr,
+        symm = TRUE, 
+        main = "MLR Predictor Correlations\n(Benign Traffic)",
         col = colorRampPalette(c("navy", "white", "firebrick"))(100))
 cor_glm <- cor(dplyr::select(glm_data, -Attack_Flag, -Label))
 heatmap(cor_glm, symm = TRUE, main = "GLM Predictor Correlations\n(All Traffic)",

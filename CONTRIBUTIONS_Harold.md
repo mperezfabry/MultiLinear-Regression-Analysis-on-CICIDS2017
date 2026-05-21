@@ -261,3 +261,43 @@ After all the changes landed, I verified the deck doesn't contradict itself anyw
 ### Bottom line
 
 Every original feedback point from the professor's notes now maps to a concrete fix in the deck. The internal references all stay consistent — anyone reading the deck without the feedback letter in hand sees a coherent statistical narrative end-to-end: data → variable selection → MLR (with diagnostics and repair) → logistic (with formulation, performance, and interpretation) → conclusions.
+
+---
+
+## Round 9 — Closing the last professor follow-ups (Slides 9 and 10)
+
+After Round 8 went out, the professor came back with two more specific notes — both about the MLR diagnostic story.
+
+### What the professor said
+
+1. *"On Slide 9, 'residuals now spread evenly around 0' — they simply don't."* The wording overclaimed what the log transform actually accomplished — the residuals at that stage still showed clear curvature.
+2. *"You address it on the next slide with the polynomial terms, but you don't end up showing the residuals-vs-fitted plot for the polynomial fit."* — the diagnostic plot proving the polynomials worked was missing from Slide 10. Earlier deck versions had it; somewhere in the design iterations it got dropped.
+
+### What I changed in this round
+
+**Slide 9 — softened the bottom-panel caption.**
+The old caption claimed the log transform produced even residuals, which the plot itself contradicted. The new caption is honest:
+> *"The log transform tames the worst tail behavior and partially straightens the Q‑Q line — but residuals vs fitted still show clear curvature. The polynomial terms added on Slide 10 substantially reduce both — though some residual structure remains."*
+
+The "substantially reduce both — though some residual structure remains" phrasing flows directly into Slide 10's argument without overclaiming the log fix.
+
+**Slide 10 — restored the polynomial diagnostic plot and rewrote its caption.**
+Pulled the `m_final` diagnostic triptych (Residuals vs Fitted, Q-Q, Cook's Distance) back into Slide 10. With the plot now visible, I went back and read it carefully. Three things are clear from it:
+- A downward LOWESS trend in the residuals — they're not random scatter
+- A heavy left tail in the Q-Q plot (one observation around standardized residual −6)
+- Two observations (627 and 1041) with Cook's distance above 1.0 — the textbook influence threshold
+
+So the original "the repair is complete" caption was wrong. I rewrote it to be honest:
+> *"After the polynomial terms, residual curvature is much milder and Cook's distance dropped from ~5,800 to ~1.2 — a substantial improvement. Some downward trend in residuals, a heavy left tail, and two points (627, 1041) with Cook's > 1 still remain. We treat this as a partial, not complete, repair."*
+
+### Why this matters
+
+The professor's feedback pattern has been consistent: they don't penalize honest caveats, but they catch every unsupported claim. By softening both captions and putting the polynomial diagnostic plot back in, the deck now matches what the plots actually show. The "is your final model fixed?" oral-exam answer becomes much more defensible:
+
+*"It's substantially improved — Cook's distance dropped from ~5,800 to ~1.2 and residual curvature is much milder. But we treat it as a partial repair: there's still a mild downward trend, a heavy left tail, and two observations with Cook's > 1 worth investigating before we'd deploy the model in a real-world setting."*
+
+### State of the deck after this round
+
+All 17 of the professor's original feedback points are still met (no regressions). The two new feedback notes from this round are now also addressed. Internal continuity between Slide 9 and Slide 10 is fixed — they now tell the same story (substantial repair, not complete) instead of contradicting each other.
+
+The deck is ready to present.

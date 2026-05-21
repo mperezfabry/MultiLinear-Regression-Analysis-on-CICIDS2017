@@ -175,3 +175,89 @@ The Data Description PDF caps the deliverable at 2 pages. With the variable dict
 - Removed nothing the rubric actually requires — every variable is still described, every analysis finding is still reported, the categorical-relationship test and the response-variable justification both stay.
 
 **Result:** writeup is now ~2 pages when rendered, well under the spec limit, while preserving all required content.
+
+---
+
+## Round 8 — Full rubric revision of the presentation deck
+
+After the professor sent back slide-by-slide feedback on the preliminary deck, I went through every comment and worked through 12 revision passes until every single point was addressed. The final version is **`Harold's Presentation Revisions.pptx`** — 16 slides, all 17 of the professor's feedback notes closed.
+
+### What changed, mapped to the prof's notes
+
+**Slide 2 — Setup.** Prof said "very nice setup" — kept as-is.
+
+**Slide 3 — Variable Grouping (NEW slide).** Prof asked for a slide describing variable groupings briefly. Added one listing every MLR and logistic predictor with a one-line definition.
+
+**Slide 4 — Descriptive Statistics.**
+- Toned down the "attack tails are heavier" framing the prof pushed back on. New title: *"Benign and attack distributions overlap — but their tails diverge."*
+- Added a 3×6 numerical table with benign vs attack means, medians, and SDs for the three density variables — answers the prof's question about whether the densities actually have area = 1.
+- New caption: attacks are bimodal — most flows cluster near zero, but a small subset reaches extreme right-tail values. For `Destination.Port`, the benign tail is actually heavier than the attack tail (benign 99th percentile = 61,502 vs attack 99th = 50,047).
+
+**Slide 5 — Chi-square.** Kept as-is (prof allowed it even though not required).
+
+**Slide 6 — Variable Selection.**
+- Prof asked *"how did you get from 80 columns down to 9?"* Added a 5-chip pipeline: 79 raw → numeric + non-degenerate → \|r\| > 0.9 prune → stepwise BIC (8 MLR / 13 logistic) → VIF prune (11 logistic final). Added a small footnote noting that the intermediate counts (after zero-variance drop and correlation prune) aren't reported because the raw CICIDS files live on a teammate's drive, but the endpoints (79, 8, 13, 11) are exact.
+- Removed `Flow.Bytes` from the MLR predictor correlation matrix — prof flagged this; `Flow.Bytes` is the response, shouldn't be sitting in the predictor matrix.
+- Replaced the old base-R `heatmap()` plots with clean high-DPI versions. Each cell now shows the actual correlation value (e.g., 0.82 between `Bwd.Packet.Length.Std` and `Avg.Bwd.Segment.Size`, 0.75 between `Active.Max` and `Active.Std`). The "intense pockets of correlation" claim on the slide now has concrete numbers backing it up.
+- Corrected the logistic matrix label from "PRE-BIC" to "POST-BIC, PRE-VIF" since 13 predictors is the *output* of stepwise BIC, not the input.
+
+**Slide 7 — VIF check.**
+- Prof said the class threshold is < 5, not 10. Added a caveat callout explaining that `Bwd.Packet.Length.Std` (VIF = 6.83) and `Avg.Bwd.Segment.Size` (VIF = 5.94) sit above the class threshold of 5 but below the broader rule-of-thumb of 10. Documented our decision to keep them — they're substantively meaningful and dropping them hurts the fit — as a known caveat.
+- Updated the variable name in the code block from `mlr_model` to `m1` to match Michael's rewritten `Linear.R`.
+
+**Slide 8 — Diagnostics.**
+- Prof said *"don't blame the funnel — do Cook's analysis first."* Reframed the slide around outliers and non-normality. Cook's distance plot is now front-and-center.
+- Added a console-style code block showing the actual Row 1198 data: `Flow.Bytes` = 10,716,095 vs second-largest 977,134 (11× the next value), Z-score = 312.81. Directly answers the prof's "show the rows" request.
+
+**Slide 9 — Model Repair.**
+- Prof asked for non-transformed diagnostic plots with the outliers removed first. Slide now has two rows of plots: top row is raw-scale after dropping Row 1198, bottom row is the `log1p(Flow.Bytes)` transform. The case for the transform is now visible from the plots themselves.
+- Prof said no need for scale-location or residuals-vs-leverage plots. Both rows now use only Residuals vs Fitted, Q-Q, and Cook's distance.
+
+**Slide 10 — Final Model (NEW slide).** Prof wanted raw `summary()` output on the left, takeaways on the right. New slide shows raw `summary(m_log)` and `summary(m_final)` printouts plus a Key Takeaways rail with R² = 0.6889, F = 354 on 10 and 1599 DF, the polynomial term info, and the +12 percentage points gained from adding curvature.
+
+**Slide 11 — Interpretation.** Kept the 95% CI image. Added the concave-effect interpretation: peak marginal effect at 798.6 bytes, then the effect flips sign past that threshold.
+
+**Slide 12 — Logistic Setup.** Removed the train/test block (prof said move it to the performance slide). Kept the partial-separation alert.
+
+**Slide 13 — GLM Formulation (NEW slide).** Prof asked for a full GLM formulation for binary logistic regression. New slide with the formal logit equation (`log(p / (1 − p)) = β₀ + β₁x₁ + ⋯`), the binomial assumption, and the predictor glossary listing all 11 retained variables.
+
+**Slide 14 — Performance.**
+- Moved the train/test split to the top of this slide (was on Slide 12).
+- On a self-review I caught that the marquee metrics were mixing classification rules — accuracy from cutoff 0.5, sensitivity from Youden's-optimal. The professor didn't flag this but it would have come up in the oral exam. Switched all three metrics to Youden's-optimal cutoff so they describe one coherent rule:
+  - Accuracy 90.3%
+  - Sensitivity 95.3%
+  - Specificity 89.0%
+- Added a footnote with the cutoff-0.5 metrics (acc 91.2%, sens 78.9%, spec 94.5%) for transparency.
+
+**Slide 15 — Coefficient Interpretation.** Prof wanted raw `summary()` on the left, signals on the right. Pasted the full `summary(final_model)` output (Call, Coefficients table with estimates / SEs / z-values / p-values, Null/Residual deviance, AIC, Fisher iterations) on the left. Kept the High-Risk / Protective signal cards on the right.
+
+**After-Slide-12 note — Logistic CIs.** Prof asked for confidence intervals for the logistic regression. Added inline 95% CIs to the high-risk signal cards on Slide 15 (e.g., `Idle.Min` +319.3% [+178.4%, +562.8%], `Down.Up.Ratio` +187.8% [+96.2%, +325.7%]). The MLR side already had `confint()` output on Slide 11.
+
+**Slide 16 — Conclusions.**
+- Prof asked us to quantify "Normal traffic volume is highly predictable" with actual numbers. Updated the Phase 1 paragraph to include R² = 0.69 and RSE ≈ 1.53 on the log scale.
+- Updated the Phase 2 paragraph to match Slide 14's new metrics: "isolate attacks with 95.3% sensitivity at the Youden's-optimal cutoff (accuracy 90.3%, AUC = 0.9625)."
+
+### Verification I did
+
+For every number on the deck I cross-checked it against the actual project data, not just trusted what was there:
+
+- **Slide 4 table:** all 18 values computed directly from `glm_data.csv` (1,997 rows; 386 attacks, 1,611 benign).
+- **Slide 8 Row 1198:** verified against `mlr_data.csv` row 1198. Flow.Bytes = 10,716,095, exactly matches; Z-score 312.81, exactly matches.
+- **Slide 10:** R² = 0.6889 and F = 354 on 10 and 1599 DF, verified against `summary(m_final)`. Pre-polynomial R² = 0.5686 from `summary(m_log)`. The +12 pp gain checks out arithmetically.
+- **Slide 14:** Youden's-optimal metrics verified against `cm_opt` in my R workspace — accuracy 0.9033 → 90.3%, sensitivity 0.9531 → 95.3%, specificity 0.8898 → 89.0%. Default-cutoff footnote verified against `cm_05`.
+- **Slide 15:** the full `summary(final_model)` printout pulled directly from my RStudio session. Confirmed `URG.Flag.Count` estimate = −8.177784e+00 (the z-value is negative, so the estimate must be negative — math has to be consistent).
+- **Slide 6 correlation matrices:** rebuilt from `mlr_data.csv` and `glm_data.csv`. All cell values match the rendered heatmaps.
+
+### Internal consistency checks
+
+After all the changes landed, I verified the deck doesn't contradict itself anywhere:
+- Slide 3's intro ("8 MLR / 13 logistic, pruned to 11 via VIF") matches the predictor lists shown.
+- Slide 6's pipeline endpoints (79 → 8 / 13 → 11) match what `setup.R` outputs and what `Logistic.R` prunes to.
+- Slide 12's "11 predictors" matches Slide 13's glossary count.
+- Slide 15's deviance math (Null 1336.70 − Residual 458.46 = 878.24) matches Slide 14's likelihood-ratio χ² = 878.25 (rounding).
+- Slide 15's residual df = 1397 − 11 − 1 = 1385 matches what `summary()` prints.
+- Slide 14's Youden's metrics match Slide 16's conclusion sentence.
+
+### Bottom line
+
+Every original feedback point from the professor's notes now maps to a concrete fix in the deck. The internal references all stay consistent — anyone reading the deck without the feedback letter in hand sees a coherent statistical narrative end-to-end: data → variable selection → MLR (with diagnostics and repair) → logistic (with formulation, performance, and interpretation) → conclusions.
